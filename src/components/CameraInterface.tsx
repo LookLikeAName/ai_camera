@@ -240,7 +240,11 @@ const CameraInterface: React.FC<CameraInterfaceProps> = ({ apiKey, aspectRatio, 
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) await processImage(file);
+    if (file) {
+      await processImage(file);
+    }
+    // Reset input value so the same file can be selected again
+    e.target.value = '';
   };
 
   const vfStyle = useMemo(() => ({
