@@ -153,6 +153,33 @@ body {
   animation: pulse 1s infinite alternate;
 }
 
+/* Loading Animations */
+.scan-line {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: var(--camera-accent);
+  box-shadow: 0 0 15px var(--camera-accent);
+  z-index: 10;
+  animation: scan 3s linear infinite;
+  opacity: 0.7;
+}
+
+.noise-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: url('https://grainy-gradients.vercel.app/noise.svg');
+  opacity: 0.1;
+  pointer-events: none;
+  z-index: 5;
+  animation: noise 0.2s steps(2) infinite;
+}
+
 .loading-text-container {
   position: absolute;
   top: 50%;

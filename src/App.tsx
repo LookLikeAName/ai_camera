@@ -3,13 +3,15 @@ import './styles/App.css';
 import ApiKeyManager from './components/ApiKeyManager';
 import CameraInterface from './components/CameraInterface';
 import { useApiKey } from './hooks/useApiKey';
-import { validateApiKey } from './api/gemini';
+import { validateApiKey, PRESET_FILTERS } from './api/gemini';
 
 function App() {
   const { keys, addKey, deleteKey, toggleActive, activeKey } = useApiKey();
   const [isValid, setIsValid] = useState<boolean | null>(null);
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [appMode, setAppMode] = useState<'upload' | 'camera'>('upload');
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [pendingConfig, setPendingConfig] = useState<any>(null);
   const lastValidatedKey = useRef<string | null>(null);
   
   // Dynamic Scaling State
@@ -19,7 +21,12 @@ function App() {
   });
 
   // Model Config State
-  const [modelConfig, setModelConfig] = useState(() => (window as any).AiCamaraConfig?.config || { aspectRatio: '16:9', imageSize: '1K' });
+  const [modelConfig, setModelConfig] = useState(() => (window as any).AiCamaraConfig?.config || { 
+    aspectRatio: '16:9', 
+    imageSize: '1K',
+    filterId: 'none',
+    customFilterDescription: ''
+  });
 
   useEffect(() => {
     const handleResize = () => {
@@ -47,14 +54,31 @@ function App() {
 
   const toggleConfig = () => setIsConfigOpen(!isConfigOpen);
 
-  const updateAspectRatio = (ratio: string) => {
-    (window as any).AiCamaraConfig?.setAspectRatio(ratio);
-    setModelConfig({ ...modelConfig, aspectRatio: ratio });
+  const requestConfigUpdate = (partial: any) => {
+    if (isProcessing) {
+      setPendingConfig(partial);
+    } else {
+      applyConfigUpdate(partial);
+    }
   };
 
-  const updateImageSize = (size: string) => {
-    (window as any).AiCamaraConfig?.setImageSize(size);
-    setModelConfig({ ...modelConfig, imageSize: size });
+  const applyConfigUpdate = (partial: any) => {
+    if (partial.appMode) {
+      setAppMode(partial.appMode);
+    } else {
+      const newConfig = (window as any).AiCamaraConfig?.updateConfig(partial);
+      if (newConfig) setModelConfig(newConfig);
+    }
+    setPendingConfig(null);
+  };
+
+  const handleAbortDecision = (confirm: boolean) => {
+    if (confirm && pendingConfig) {
+      applyConfigUpdate(pendingConfig);
+    } else {
+      setPendingConfig(null);
+      setIsConfigOpen(false);
+    }
   };
 
   // Calculate UI Scale factor based on window size
@@ -74,7 +98,7 @@ function App() {
         <div className="header-controls">
           <button 
             className={`config-trigger-header ${appMode === 'camera' ? 'active' : ''}`} 
-            onClick={() => setAppMode(appMode === 'upload' ? 'camera' : 'upload')}
+            onClick={() => requestConfigUpdate({ appMode: appMode === 'upload' ? 'camera' : 'upload' })}
             style={{ fontSize: `calc(0.6rem * var(--ui-scale))` }}
           >
             {appMode === 'upload' ? '[ USE CAMERA ]' : '[ USE UPLOAD ]'}
@@ -96,10 +120,26 @@ function App() {
         <CameraInterface 
           apiKey={isValid ? activeKey : null} 
           aspectRatio={modelConfig.aspectRatio}
+          filterId={modelConfig.filterId}
+          imageSize={modelConfig.imageSize}
           appMode={appMode}
+          onProcessingChange={setIsProcessing}
         />
         
-        {isConfigOpen && (
+        {pendingConfig && (
+          <div className="error-popup" style={{ zIndex: 400, borderColor: 'var(--camera-accent)' }}>
+            <div className="error-icon" style={{ borderColor: 'var(--camera-accent)', color: 'var(--camera-accent)' }}>!</div>
+            <div className="error-title" style={{ color: 'var(--camera-accent)' }}>ABORT GENERATION?</div>
+            <div className="error-msg">
+              Changing settings will stop the current AI process. 
+              Do you want to proceed and lose current progress?
+            </div>
+            <button className="error-btn" style={{ background: 'var(--camera-accent)', color: 'black' }} onClick={() => handleAbortDecision(true)}>PROCEED & ABORT</button>
+            <button className="error-btn secondary" onClick={() => handleAbortDecision(false)}>CANCEL</button>
+          </div>
+        )}
+
+        {isConfigOpen && !pendingConfig && (
           <div className="config-overlay">
             <div className="config-header">
               <div style={{ fontSize: `calc(0.9rem * var(--ui-scale))`, letterSpacing: '2px' }}>SYSTEM SETTINGS</div>
@@ -113,7 +153,7 @@ function App() {
                   <button 
                     key={ratio} 
                     className={`config-btn ${modelConfig.aspectRatio === ratio ? 'active' : ''}`}
-                    onClick={() => updateAspectRatio(ratio)}
+                    onClick={() => requestConfigUpdate({ aspectRatio: ratio })}
                     style={{ fontSize: `calc(0.6rem * var(--ui-scale))` }}
                   >
                     {ratio}
@@ -129,13 +169,38 @@ function App() {
                   <button 
                     key={size} 
                     className={`config-btn ${modelConfig.imageSize === size ? 'active' : ''}`}
-                    onClick={() => updateImageSize(size)}
+                    onClick={() => requestConfigUpdate({ imageSize: size })}
                     style={{ fontSize: `calc(0.6rem * var(--ui-scale))` }}
                   >
                     {size}
                   </button>
                 ))}
               </div>
+            </div>
+
+            <div className="config-section">
+              <label className="config-label">AI FILTER</label>
+              <div className="config-options">
+                {PRESET_FILTERS.map(filter => (
+                  <button 
+                    key={filter.id} 
+                    className={`config-btn ${modelConfig.filterId === filter.id ? 'active' : ''}`}
+                    onClick={() => requestConfigUpdate({ filterId: filter.id })}
+                    style={{ fontSize: `calc(0.6rem * var(--ui-scale))` }}
+                  >
+                    {filter.name}
+                  </button>
+                ))}
+              </div>
+              {modelConfig.filterId === 'custom' && (
+                <textarea 
+                  className="input-field" 
+                  style={{ marginTop: '10px', height: '60px', resize: 'none' }}
+                  placeholder="Enter custom style description..."
+                  value={modelConfig.customFilterDescription}
+                  onChange={(e) => applyConfigUpdate({ customFilterDescription: e.target.value })}
+                />
+              )}
             </div>
 
             <div style={{ marginTop: 'auto' }}>

@@ -1,11 +1,36 @@
+import * as piexif from 'piexifjs';
+
 const BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
 const STORAGE_KEY = 'ai_camara_models';
+
+export interface FilterOption {
+  id: string;
+  name: string;
+  description: string;
+}
+
+export const PRESET_FILTERS: FilterOption[] = [
+  { id: 'none', name: 'NONE', description: '' },
+  { id: 'cyberpunk', name: 'CYBERPUNK', description: 'In a neon-lit cyberpunk style, with high contrast, vibrant blues and pinks, futuristic atmosphere.' },
+  { id: 'oilpainting', name: 'OIL PAINTING', description: 'In the style of a classical oil painting, with visible brushstrokes, rich textures, and warm lighting.' },
+  { id: 'sketch', name: 'SKETCH', description: 'As a detailed pencil sketch, monochrome, with fine lines and shading.' },
+  { id: 'pixelart', name: 'PIXEL ART', description: 'In a retro 8-bit pixel art style, with limited color palette and blocky textures.' },
+  { id: 'watercolor', name: 'WATERCOLOR', description: 'As a soft watercolor painting, with bleeding colors and delicate textures.' },
+  { id: 'custom', name: 'CUSTOM', description: '' },
+];
+
+const DEFAULT_VISION_PROMPT = "Describe this image as detailed as possible. Focus on composition, colors, textures, lighting, and every small detail to reconstruct it later. Provide only the description.";
+
+// Session-scoped variable for vision prompt
+let sessionVisionPrompt = DEFAULT_VISION_PROMPT;
 
 interface ModelConfig {
   visionModel: string;
   imageModel: string;
   aspectRatio: string; // "1:1", "16:9", "9:16", "3:4", "4:3"
   imageSize: string;   // "1K", "2K", "4K"
+  filterId: string;
+  customFilterDescription: string;
 }
 
 const DEFAULT_CONFIG: ModelConfig = {
@@ -13,6 +38,8 @@ const DEFAULT_CONFIG: ModelConfig = {
   imageModel: 'gemini-3.1-flash-image-preview',
   aspectRatio: '16:9',
   imageSize: '1K',
+  filterId: 'none',
+  customFilterDescription: '',
 };
 
 /**
@@ -66,8 +93,21 @@ if (typeof window !== 'undefined') {
       saveModelConfig({ ...current, imageSize: size.toUpperCase() });
       console.log(`[AiCamara] Image size updated to: ${size.toUpperCase()}`);
     },
+    setFilter(filterId: string, customDesc: string = '') {
+      const current = getModelConfig();
+      saveModelConfig({ ...current, filterId, customFilterDescription: customDesc });
+      console.log(`[AiCamara] Filter updated to: ${filterId}`);
+    },
+    setVisionPrompt(prompt: string) {
+      sessionVisionPrompt = prompt;
+      console.log(`[AiCamara] Vision system prompt updated for this session.`);
+    },
+    get visionPrompt() {
+      return sessionVisionPrompt;
+    },
     reset() {
       saveModelConfig(DEFAULT_CONFIG);
+      sessionVisionPrompt = DEFAULT_VISION_PROMPT;
       console.log('[AiCamara] Config reset to defaults.');
     },
     updateConfig(partial: Partial<ModelConfig>) {
@@ -81,6 +121,9 @@ Use window.AiCamaraConfig to modify settings:
 - .setImageModel('model-id')
 - .setAspectRatio('1:1' | '16:9' | '9:16' | '4:3' | '3:4')
 - .setImageSize('1K' | '2K' | '4K')
+- .setFilter('filter-id', 'optional-custom-desc')
+- .setVisionPrompt('your custom system prompt') (Session only)
+- .visionPrompt (View current system prompt)
 - .config (view current config)
 - .reset() (restore defaults)
     `.trim()
@@ -89,7 +132,6 @@ Use window.AiCamaraConfig to modify settings:
 
 /**
  * Encodes and compresses an image to a base64 string.
- * Resizes the image to a maximum dimension of 768px for token efficiency.
  */
 export const processImageForApi = async (fileOrBlob: Blob): Promise<string> => {
   return new Promise((resolve, reject) => {
@@ -100,7 +142,6 @@ export const processImageForApi = async (fileOrBlob: Blob): Promise<string> => {
       let width = img.width;
       let height = img.height;
 
-      // Target max dimension for Gemini Vision (768px is often enough for detailed descriptions)
       const MAX_DIM = 768;
       if (width > MAX_DIM || height > MAX_DIM) {
         if (width > height) {
@@ -118,8 +159,6 @@ export const processImageForApi = async (fileOrBlob: Blob): Promise<string> => {
       if (!ctx) return reject('Failed to get canvas context');
       
       ctx.drawImage(img, 0, 0, width, height);
-      
-      // Compress to JPEG at 0.8 quality
       const base64 = canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
       URL.revokeObjectURL(img.src);
       resolve(base64);
@@ -129,14 +168,75 @@ export const processImageForApi = async (fileOrBlob: Blob): Promise<string> => {
 };
 
 /**
+ * Injects GPS coordinates into a base64 JPEG image.
+ */
+export const injectGpsMetadata = (base64Image: string, latitude: number, longitude: number): string => {
+  try {
+    const zeroth: any = {};
+    const exif: any = {};
+    const gps: any = {};
+
+    // Helper to convert decimal coordinates to EXIF rational format
+    const toRational = (n: number) => {
+      const deg = Math.floor(Math.abs(n));
+      const min = Math.floor((Math.abs(n) - deg) * 60);
+      const sec = Math.round(((Math.abs(n) - deg) * 60 - min) * 60 * 100);
+      return [[deg, 1], [min, 1], [sec, 100]];
+    };
+
+    gps[piexif.GPSIFD.GPSLatitudeRef] = latitude >= 0 ? 'N' : 'S';
+    gps[piexif.GPSIFD.GPSLatitude] = toRational(latitude);
+    gps[piexif.GPSIFD.GPSLongitudeRef] = longitude >= 0 ? 'E' : 'W';
+    gps[piexif.GPSIFD.GPSLongitude] = toRational(longitude);
+    gps[piexif.GPSIFD.GPSDateStamp] = new Date().toISOString().replace(/-/g, ':').split('T')[0];
+
+    const exifObj = { "0th": zeroth, "Exif": exif, "GPS": gps };
+    const exifBytes = piexif.dump(exifObj);
+    
+    // Ensure we have a data URL with jpeg mime type
+    const dataUrl = base64Image.startsWith('data:') ? base64Image : `data:image/jpeg;base64,${base64Image}`;
+    const newImage = piexif.insert(exifBytes, dataUrl);
+    
+    return newImage;
+  } catch (err) {
+    console.error("EXIF Injection failed:", err);
+    return base64Image; // Return original if it fails
+  }
+};
+
+/**
+ * Ensures an image is a JPEG by drawing it onto a canvas.
+ */
+export const ensureJpeg = async (dataUrl: string): Promise<string> => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.src = dataUrl;
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.fillStyle = "#FFFFFF"; // Background for transparency
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0);
+        resolve(canvas.toDataURL('image/jpeg', 0.95));
+      } else {
+        resolve(dataUrl);
+      }
+    };
+    img.onerror = () => resolve(dataUrl);
+  });
+};
+
+/**
  * Validates the API key and checks if the required models are available.
  */
 export const validateApiKey = async (apiKey: string): Promise<{ valid: boolean; error?: string }> => {
   try {
     const response = await fetch(`${BASE_URL}/models`, {
-      headers: {
-        'x-goog-api-key': apiKey
-      }
+      headers: { 'x-goog-api-key': apiKey }
     });
     
     if (!response.ok) {
@@ -146,20 +246,13 @@ export const validateApiKey = async (apiKey: string): Promise<{ valid: boolean; 
 
     const data = await response.json();
     const models = data.models || [];
-    
     const config = getModelConfig();
-    const requiredModels = [config.visionModel, config.imageModel];
     const availableModelNames = models.map((m: any) => m.name.split('/').pop());
-    
-    const missingModels = requiredModels.filter(m => !availableModelNames.includes(m));
+    const missingModels = [config.visionModel, config.imageModel].filter(m => !availableModelNames.includes(m));
     
     if (missingModels.length > 0) {
-      return { 
-        valid: false, 
-        error: `Key valid, but missing required models: ${missingModels.join(', ')}` 
-      };
+      return { valid: false, error: `Key valid, but missing required models: ${missingModels.join(', ')}` };
     }
-
     return { valid: true };
   } catch (err: any) {
     return { valid: false, error: err.message || 'Connection error' };
@@ -171,22 +264,12 @@ export const validateApiKey = async (apiKey: string): Promise<{ valid: boolean; 
  */
 const handleCandidateError = (candidate: any) => {
   if (!candidate) return;
-  
   const reason = candidate.finishReason || candidate.finish_reason;
   const message = candidate.finishMessage || candidate.finish_message;
-
-  if (reason === 'PROHIBITED_CONTENT') {
-    throw new Error('BLOCKED: Prohibited content detected.');
-  }
-  if (reason === 'SAFETY') {
-    throw new Error('BLOCKED: Safety filters triggered.');
-  }
-  if (reason === 'RECITATION') {
-    throw new Error('BLOCKED: Content flagged as copyrighted material.');
-  }
-  if (reason && reason !== 'STOP') {
-    throw new Error(`BLOCKED: ${message || reason}`);
-  }
+  if (reason === 'PROHIBITED_CONTENT') throw new Error('BLOCKED: Prohibited content detected.');
+  if (reason === 'SAFETY') throw new Error('BLOCKED: Safety filters triggered.');
+  if (reason === 'RECITATION') throw new Error('BLOCKED: Content flagged as copyrighted material.');
+  if (reason && reason !== 'STOP') throw new Error(`BLOCKED: ${message || reason}`);
 };
 
 /**
@@ -194,17 +277,13 @@ const handleCandidateError = (candidate: any) => {
  */
 export const describeImage = async (apiKey: string, imageBase64: string): Promise<string> => {
   const { visionModel } = getModelConfig();
-
   const response = await fetch(`${BASE_URL}/models/${visionModel}:generateContent`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-goog-api-key': apiKey
-    },
+    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
     body: JSON.stringify({
       contents: [{
         parts: [
-          { text: "Describe this image as detailed as possible. Focus on composition, colors, textures, lighting, and every small detail to reconstruct it later. Provide only the description." },
+          { text: sessionVisionPrompt },
           { inline_data: { mime_type: "image/jpeg", data: imageBase64 } }
         ]
       }]
@@ -218,13 +297,9 @@ export const describeImage = async (apiKey: string, imageBase64: string): Promis
 
   const data = await response.json();
   const candidate = data.candidates?.[0];
-  
   handleCandidateError(candidate);
-
   const description = candidate?.content?.parts?.[0]?.text;
-  
   if (!description) throw new Error('No description generated');
-  
   return description;
 };
 
@@ -232,23 +307,25 @@ export const describeImage = async (apiKey: string, imageBase64: string): Promis
  * Calls the image model to generate an image from a prompt.
  */
 export const generateImage = async (apiKey: string, prompt: string): Promise<string> => {
-  const { imageModel, aspectRatio, imageSize } = getModelConfig();
+  const { imageModel, aspectRatio, imageSize, filterId, customFilterDescription } = getModelConfig();
   
+  // Apply filter to the prompt
+  let finalPrompt = prompt;
+  const selectedFilter = PRESET_FILTERS.find(f => f.id === filterId);
+  
+  if (filterId === 'custom' && customFilterDescription) {
+    finalPrompt = `${prompt} ${customFilterDescription}`;
+  } else if (selectedFilter && selectedFilter.description) {
+    finalPrompt = `${prompt} ${selectedFilter.description}`;
+  }
+
   const response = await fetch(`${BASE_URL}/models/${imageModel}:generateContent`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-goog-api-key': apiKey
-    },
+    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
     body: JSON.stringify({
-      contents: [{
-        parts: [{ text: prompt }]
-      }],
+      contents: [{ parts: [{ text: finalPrompt }] }],
       generationConfig: {
-        image_config: {
-          aspect_ratio: aspectRatio,
-          image_size: imageSize
-        }
+        image_config: { aspect_ratio: aspectRatio, image_size: imageSize }
       }
     })
   });
@@ -260,17 +337,10 @@ export const generateImage = async (apiKey: string, prompt: string): Promise<str
 
   const data = await response.json();
   const candidate = data.candidates?.[0];
-
   handleCandidateError(candidate);
-
   const imagePart = candidate?.content?.parts?.find((p: any) => p.inline_data || p.inlineData);
   const imageData = imagePart?.inline_data?.data || imagePart?.inlineData?.data;
   const mimeType = imagePart?.inline_data?.mime_type || imagePart?.inlineData?.mimeType || 'image/png';
-  
-  if (!imageData) {
-    console.error('[DEBUG] Unexpected response structure:', data);
-    throw new Error('No image data found in response');
-  }
-  
+  if (!imageData) throw new Error('No image data found in response');
   return `data:${mimeType};base64,${imageData}`;
 };

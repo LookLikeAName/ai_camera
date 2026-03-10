@@ -1,40 +1,61 @@
 import { useRef, useState, useEffect, useMemo } from 'react';
-import { describeImage, generateImage, processImageForApi } from '../api/gemini';
+import { describeImage, generateImage, processImageForApi, injectGpsMetadata, ensureJpeg } from '../api/gemini';
 
 interface CameraInterfaceProps {
   apiKey: string | null;
   aspectRatio: string;
+  filterId: string;
+  imageSize: string;
   appMode: 'upload' | 'camera';
+  onProcessingChange?: (processing: boolean) => void;
 }
 
-const CameraInterface: React.FC<CameraInterfaceProps> = ({ apiKey, aspectRatio, appMode }) => {
+const CameraInterface: React.FC<CameraInterfaceProps> = ({ apiKey, aspectRatio, filterId, imageSize, appMode, onProcessingChange }) => {
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('IDLE');
   const [subStatus, setSubStatus] = useState('');
   const [resultImage, setResultImage] = useState<string | null>(null);
   const [originalPreview, setOriginalPreview] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [coords, setCoords] = useState<{lat: number, lng: number} | null>(null);
+  const [showGpsPrompt, setShowGpsPrompt] = useState(false);
+  const gpsDecisionMade = useRef(false);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
   
   const [vfSize, setVfSize] = useState({ width: 0, height: 0 });
 
   const resetState = () => {
+    // Abort ongoing requests
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    
     setResultImage(null);
     setOriginalPreview(null);
     setStatus('IDLE');
     setSubStatus('');
     setErrorMessage(null);
+    setCoords(null);
+    setLoading(false);
+    onProcessingChange?.(false);
   };
+
+  // Notify parent of processing state
+  useEffect(() => {
+    const processing = loading || (!!originalPreview && !resultImage);
+    onProcessingChange?.(processing);
+  }, [loading, originalPreview, resultImage, onProcessingChange]);
 
   // Handle Camera Stream
   useEffect(() => {
     const startCamera = async () => {
-      // Only start camera if we are in camera mode AND not loading AND no result image is currently shown
       if (appMode === 'camera' && !loading && !resultImage && !originalPreview) {
         try {
           const stream = await navigator.mediaDevices.getUserMedia({ 
@@ -68,10 +89,10 @@ const CameraInterface: React.FC<CameraInterfaceProps> = ({ apiKey, aspectRatio, 
     }
   };
 
-  // Reset state when aspect ratio or app mode changes
+  // Reset state when key settings change
   useEffect(() => {
     resetState();
-  }, [aspectRatio, appMode]);
+  }, [aspectRatio, appMode, filterId, imageSize]);
 
   // Calculate optimal viewfinder size
   useEffect(() => {
@@ -98,28 +119,10 @@ const CameraInterface: React.FC<CameraInterfaceProps> = ({ apiKey, aspectRatio, 
     return () => observer.disconnect();
   }, [aspectRatio]);
 
-  const handleCapture = async () => {
-    if (loading) return;
-
-    // "Next" function: Reset only works AFTER generated image is showed
-    if (resultImage) {
-      resetState();
-      return;
-    }
-
-    // If an image is being processed (originalPreview exists but resultImage doesn't), shutter is disabled
-    if (originalPreview) return;
-
-    if (appMode === 'upload') {
-      fileInputRef.current?.click();
-      return;
-    }
-
-    // Camera Capture logic
+  const performCapture = async () => {
     if (videoRef.current && canvasRef.current) {
       const video = videoRef.current;
       const canvas = canvasRef.current;
-      
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       const ctx = canvas.getContext('2d');
@@ -134,8 +137,48 @@ const CameraInterface: React.FC<CameraInterfaceProps> = ({ apiKey, aspectRatio, 
     }
   };
 
+  const handleCapture = async () => {
+    if (loading) return;
+
+    if (resultImage) {
+      resetState();
+      return;
+    }
+
+    if (originalPreview) return;
+
+    if (appMode === 'camera') {
+      if (!gpsDecisionMade.current && !coords && "geolocation" in navigator) {
+        setShowGpsPrompt(true);
+        return;
+      }
+      await performCapture();
+    } else {
+      fileInputRef.current?.click();
+    }
+  };
+
+  const handleGpsDecision = (enable: boolean) => {
+    gpsDecisionMade.current = true;
+    setShowGpsPrompt(false);
+    if (enable) {
+      navigator.geolocation.getCurrentPosition((pos) => {
+        setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        performCapture();
+      }, (err) => {
+        console.warn("Location error:", err);
+        performCapture();
+      });
+    } else {
+      performCapture();
+    }
+  };
+
   const processImage = async (fileOrBlob: Blob) => {
     if (!apiKey) return;
+    
+    abortControllerRef.current = new AbortController();
+    
     try {
       setLoading(true);
       setErrorMessage(null);
@@ -150,22 +193,49 @@ const CameraInterface: React.FC<CameraInterfaceProps> = ({ apiKey, aspectRatio, 
       
       const base64 = await processImageForApi(fileOrBlob);
       const description = await describeImage(apiKey, base64);
+      
+      if (abortControllerRef.current?.signal.aborted) return;
+
       console.log('[DEBUG] AI Vision Description:', description);
 
       setStatus('RECONSTRUCTING...');
       setSubStatus('DREAMING IN PROGRESS (10-30S)');
       const generatedImageUrl = await generateImage(apiKey, description);
       
+      if (abortControllerRef.current?.signal.aborted) return;
+
       setResultImage(generatedImageUrl);
       setStatus('READY');
       setSubStatus('');
     } catch (err: any) {
+      if (err.name === 'AbortError') return;
       console.error(err);
       setErrorMessage(err.message || 'SYSTEM FAILURE');
       setStatus('IDLE');
     } finally {
-      setLoading(false);
+      if (!abortControllerRef.current?.signal.aborted) {
+        setLoading(false);
+        abortControllerRef.current = null;
+      }
     }
+  };
+
+  const handleDownload = async () => {
+    if (!resultImage) return;
+    
+    let finalImage = resultImage;
+    
+    if (coords) {
+      setStatus('PROCESSING EXIF...');
+      const jpeg = await ensureJpeg(resultImage);
+      finalImage = injectGpsMetadata(jpeg, coords.lat, coords.lng);
+      setStatus('READY');
+    }
+
+    const link = document.createElement('a');
+    link.href = finalImage;
+    link.download = `reconstructed_${Date.now()}.jpg`;
+    link.click();
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -208,6 +278,19 @@ const CameraInterface: React.FC<CameraInterfaceProps> = ({ apiKey, aspectRatio, 
           </div>
         )}
 
+        {showGpsPrompt && (
+          <div className="error-popup" style={{ borderColor: 'var(--camera-accent)' }}>
+            <div className="error-icon" style={{ borderColor: 'var(--camera-accent)', color: 'var(--camera-accent)' }}>?</div>
+            <div className="error-title" style={{ color: 'var(--camera-accent)' }}>GPS TAGGING</div>
+            <div className="error-msg">
+              Enable GPS to add location data to your photo's EXIF metadata. 
+              Info is only used for the file header. Camera works without it.
+            </div>
+            <button className="error-btn" style={{ background: 'var(--camera-accent)', color: 'black' }} onClick={() => handleGpsDecision(true)}>ENABLE GPS</button>
+            <button className="error-btn secondary" onClick={() => handleGpsDecision(false)}>NO THANKS</button>
+          </div>
+        )}
+
         {errorMessage && (
           <div className="error-popup">
             <div className="error-icon">!</div>
@@ -226,16 +309,8 @@ const CameraInterface: React.FC<CameraInterfaceProps> = ({ apiKey, aspectRatio, 
             <div style={{ position: 'absolute', top: '10px', left: '10px', display: 'flex', gap: '5px' }}>
                <button className="download-btn" style={{ position: 'static', background: '#fff' }} onClick={resetState}>NEW SHOT</button>
             </div>
-            <button 
-              className="download-btn" 
-              onClick={() => {
-                const link = document.createElement('a');
-                link.href = resultImage;
-                link.download = `reconstructed_${Date.now()}.png`;
-                link.click();
-              }}
-            >
-              DOWNLOAD
+            <button className="download-btn" onClick={handleDownload}>
+              DOWNLOAD {coords ? '(GPS+)' : ''}
             </button>
           </>
         ) : originalPreview ? (
