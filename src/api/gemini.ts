@@ -19,7 +19,7 @@ export const PRESET_FILTERS: FilterOption[] = [
   { id: 'custom', name: 'CUSTOM', description: '' },
 ];
 
-const DEFAULT_VISION_PROMPT = "Describe this image as detailed as possible. Focus on composition, colors, textures, lighting, and every small detail to reconstruct it later. Provide only the description.";
+const DEFAULT_VISION_PROMPT = "Provide a high-fidelity, literal description of this image for reconstruction. Avoid subjective interpretations and focus strictly on observable physical attributes.1. Artistic Style:Identify the medium, such as realistic photography, anime, digital illustration, or specific painting styles. Mention any visible brushwork, line thickness, or rendering techniques.2. Global Scene: A concise summary of the setting and overall atmosphere.3. Composition & Perspective: Define the camera angle, framing, and use of negative space.4. Subject Mapping: List all subjects and their precise spatial relationships and positions within the frame.5. Micro-Detail: For each subject, describe its exact scale, specific color shades, textures, and orientation.6. Technical Lighting: Identify light sources, shadow directions, and highlights to define 3D volume.Provide only the description.";
 
 // Session-scoped variable for vision prompt
 let sessionVisionPrompt = DEFAULT_VISION_PROMPT;
