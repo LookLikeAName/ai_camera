@@ -7,27 +7,65 @@ export interface FilterOption {
   id: string;
   name: string;
   description: string;
+  visionInstruction: string;
 }
 
 export const PRESET_FILTERS: FilterOption[] = [
-  { id: 'none', name: 'NONE', description: '' },
-  { id: 'cyberpunk', name: 'CYBERPUNK', description: 'In a neon-lit cyberpunk style, with high contrast, vibrant blues and pinks, futuristic atmosphere.' },
-  { id: 'oilpainting', name: 'OIL PAINTING', description: 'In the style of a classical oil painting, with visible brushstrokes, rich textures, and warm lighting.' },
-  { id: 'sketch', name: 'SKETCH', description: 'As a detailed pencil sketch, monochrome, with fine lines and shading.' },
-  { id: 'pixelart', name: 'PIXEL ART', description: 'In a retro 8-bit pixel art style, with limited color palette and blocky textures.' },
-  { id: 'watercolor', name: 'WATERCOLOR', description: 'As a soft watercolor painting, with bleeding colors and delicate textures.' },
-  { id: 'custom', name: 'CUSTOM', description: '' },
+  { 
+    id: 'none', 
+    name: 'NONE', 
+    description: '',
+    visionInstruction: 'Provide a high-fidelity, literal description of this image for reconstruction. Avoid subjective interpretations and focus strictly on observable physical attributes.'
+  },
+  { 
+    id: 'cyberpunk', 
+    name: 'CYBERPUNK', 
+    description: 'In a neon-lit cyberpunk style, with high contrast, vibrant blues and pinks, futuristic atmosphere.',
+    visionInstruction: 'Analyze this image and describe it as if it were a neon-lit cyberpunk scene. Focus on how the elements would look with futuristic augmentation, vibrant neon lighting, and high-tech-low-life atmosphere.'
+  },
+  { 
+    id: 'oilpainting', 
+    name: 'OIL PAINTING', 
+    description: 'In the style of a classical oil painting, with visible brushstrokes, rich textures, and warm lighting.',
+    visionInstruction: 'Analyze this image and describe it as if it were a classical oil painting. Focus on the textures of brushstrokes, the play of light and shadow (chiaroscuro), and the richness of the pigments.'
+  },
+  { 
+    id: 'sketch', 
+    name: 'SKETCH', 
+    description: 'As a detailed pencil sketch, monochrome, with fine lines and shading.',
+    visionInstruction: 'Analyze this image and describe it as if it were a detailed pencil sketch. Focus on the linework, cross-hatching, varied lead weights, and the texture of the paper.'
+  },
+  { 
+    id: 'pixelart', 
+    name: 'PIXEL ART', 
+    description: 'In a retro 8-bit pixel art style, with limited color palette and blocky textures.',
+    visionInstruction: 'Analyze this image and describe it as if it were a retro 8-bit pixel art piece. Focus on the blocky sprite-like subjects, the dithered shading, and the specific limited color palette of an old game console.'
+  },
+  { 
+    id: 'watercolor', 
+    name: 'WATERCOLOR', 
+    description: 'As a soft watercolor painting, with bleeding colors and delicate textures.',
+    visionInstruction: 'Analyze this image and describe it as if it were a delicate watercolor painting. Focus on the bleeding edges of colors, the transparency of the layers, and the visible texture of the watercolor paper.'
+  },
+  { 
+    id: 'custom', 
+    name: 'CUSTOM', 
+    description: '',
+    visionInstruction: '' 
+  },
 ];
 
-const DEFAULT_VISION_PROMPT = `Provide a high-fidelity, literal description of this image for reconstruction. Avoid subjective interpretations and focus strictly on observable physical attributes.
+const VISION_DETAIL_GUIDE = `
 1. Global Scene: A concise summary of the setting and overall atmosphere.
 2. Composition & Perspective: Define the camera angle, framing, and use of negative space.
 3. Subject Mapping: List all subjects and their precise spatial relationships and positions within the frame.
 4. Micro-Detail: For each subject, describe its exact scale, specific color shades, textures, and orientation.
 5. Technical Lighting: Identify light sources, shadow directions, and highlights to define 3D volume.
-6. Artistic Style: Identify the medium, such as realistic photography, anime, digital illustration, or specific painting styles. Mention any visible brushwork, line thickness, or rendering techniques.
+6. Artistic Style: Identify the medium and rendering techniques.
 IMPORTANT: Prefix the final section with "STYLE: ".
 Provide only the description.`;
+
+const DEFAULT_VISION_PROMPT = `Provide a high-fidelity, literal description of this image for reconstruction. Avoid subjective interpretations and focus strictly on observable physical attributes. ${VISION_DETAIL_GUIDE}`;
 
 // Session-scoped variable for vision prompt
 let sessionVisionPrompt = DEFAULT_VISION_PROMPT;
@@ -292,14 +330,28 @@ const handleCandidateError = (candidate: any) => {
  * Calls the vision model to describe an image.
  */
 export const describeImage = async (apiKey: string, imageBase64: string): Promise<string> => {
-  const { visionModel } = getModelConfig();
+  const { visionModel, filterId, customFilterDescription } = getModelConfig();
+  
+  // Decide which base instruction to use
+  let baseInstruction = sessionVisionPrompt;
+  const selectedFilter = PRESET_FILTERS.find(f => f.id === filterId);
+  
+  if (sessionVisionPrompt === DEFAULT_VISION_PROMPT) {
+    // If using the default prompt, we can inject style-specific vision instructions
+    if (filterId === 'custom' && customFilterDescription) {
+      baseInstruction = `Analyze this image and describe it as if it were a ${customFilterDescription}. Focus on how the subjects and atmosphere would be represented in that medium. ${VISION_DETAIL_GUIDE}`;
+    } else if (selectedFilter && selectedFilter.visionInstruction) {
+      baseInstruction = `${selectedFilter.visionInstruction} ${VISION_DETAIL_GUIDE}`;
+    }
+  }
+
   const response = await fetch(`${BASE_URL}/models/${visionModel}:generateContent`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
     body: JSON.stringify({
       contents: [{
         parts: [
-          { text: sessionVisionPrompt },
+          { text: baseInstruction },
           { inline_data: { mime_type: "image/jpeg", data: imageBase64 } }
         ]
       }]
@@ -325,27 +377,10 @@ export const describeImage = async (apiKey: string, imageBase64: string): Promis
 export const generateImage = async (apiKey: string, prompt: string): Promise<string> => {
   const { imageModel, aspectRatio, imageSize, filterId, customFilterDescription } = getModelConfig();
   
-  // Logic to handle "Artistic Style" based on filter selection
-  let finalPrompt = prompt;
-  const styleIndex = prompt.lastIndexOf('STYLE:');
-  
-  if (filterId === 'none') {
-    // If filter is NONE, we keep the vision model's detected style.
-    // We just clean up the "STYLE: " prefix if it exists.
-    finalPrompt = prompt.replace('STYLE:', '').trim();
-  } else {
-    // If a filter is selected, we remove the vision model's style and append our own.
-    if (styleIndex !== -1) {
-      finalPrompt = prompt.substring(0, styleIndex).trim();
-    }
-    
-    const selectedFilter = PRESET_FILTERS.find(f => f.id === filterId);
-    if (filterId === 'custom' && customFilterDescription) {
-      finalPrompt = `${finalPrompt} ${customFilterDescription}`;
-    } else if (selectedFilter && selectedFilter.description) {
-      finalPrompt = `${finalPrompt} ${selectedFilter.description}`;
-    }
-  }
+  // Use the vision model's prompt directly, just clean up the prefix
+  const finalPrompt = prompt.replace('STYLE:', '').trim();
+
+  console.log('[DEBUG] Final Prompt sent to Image Model:', finalPrompt);
 
   const response = await fetch(`${BASE_URL}/models/${imageModel}:generateContent`, {
     method: 'POST',
