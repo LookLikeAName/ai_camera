@@ -19,7 +19,15 @@ export const PRESET_FILTERS: FilterOption[] = [
   { id: 'custom', name: 'CUSTOM', description: '' },
 ];
 
-const DEFAULT_VISION_PROMPT = "Provide a high-fidelity, literal description of this image for reconstruction. Avoid subjective interpretations and focus strictly on observable physical attributes.1. Artistic Style:Identify the medium, such as realistic photography, anime, digital illustration, or specific painting styles. Mention any visible brushwork, line thickness, or rendering techniques.2. Global Scene: A concise summary of the setting and overall atmosphere.3. Composition & Perspective: Define the camera angle, framing, and use of negative space.4. Subject Mapping: List all subjects and their precise spatial relationships and positions within the frame.5. Micro-Detail: For each subject, describe its exact scale, specific color shades, textures, and orientation.6. Technical Lighting: Identify light sources, shadow directions, and highlights to define 3D volume.Provide only the description.";
+const DEFAULT_VISION_PROMPT = `Provide a high-fidelity, literal description of this image for reconstruction. Avoid subjective interpretations and focus strictly on observable physical attributes.
+1. Global Scene: A concise summary of the setting and overall atmosphere.
+2. Composition & Perspective: Define the camera angle, framing, and use of negative space.
+3. Subject Mapping: List all subjects and their precise spatial relationships and positions within the frame.
+4. Micro-Detail: For each subject, describe its exact scale, specific color shades, textures, and orientation.
+5. Technical Lighting: Identify light sources, shadow directions, and highlights to define 3D volume.
+6. Artistic Style: Identify the medium, such as realistic photography, anime, digital illustration, or specific painting styles. Mention any visible brushwork, line thickness, or rendering techniques.
+IMPORTANT: Prefix the final section with "STYLE: ".
+Provide only the description.`;
 
 // Session-scoped variable for vision prompt
 let sessionVisionPrompt = DEFAULT_VISION_PROMPT;
@@ -31,6 +39,7 @@ interface ModelConfig {
   imageSize: string;   // "1K", "2K", "4K"
   filterId: string;
   customFilterDescription: string;
+  enableGps: boolean;
 }
 
 const DEFAULT_CONFIG: ModelConfig = {
@@ -40,6 +49,7 @@ const DEFAULT_CONFIG: ModelConfig = {
   imageSize: '1K',
   filterId: 'none',
   customFilterDescription: '',
+  enableGps: false,
 };
 
 /**
@@ -98,6 +108,11 @@ if (typeof window !== 'undefined') {
       saveModelConfig({ ...current, filterId, customFilterDescription: customDesc });
       console.log(`[AiCamara] Filter updated to: ${filterId}`);
     },
+    setEnableGps(enabled: boolean) {
+      const current = getModelConfig();
+      saveModelConfig({ ...current, enableGps: enabled });
+      console.log(`[AiCamara] GPS enabled: ${enabled}`);
+    },
     setVisionPrompt(prompt: string) {
       sessionVisionPrompt = prompt;
       console.log(`[AiCamara] Vision system prompt updated for this session.`);
@@ -122,6 +137,7 @@ Use window.AiCamaraConfig to modify settings:
 - .setAspectRatio('1:1' | '16:9' | '9:16' | '4:3' | '3:4')
 - .setImageSize('1K' | '2K' | '4K')
 - .setFilter('filter-id', 'optional-custom-desc')
+- .setEnableGps(true | false)
 - .setVisionPrompt('your custom system prompt') (Session only)
 - .visionPrompt (View current system prompt)
 - .config (view current config)
@@ -309,14 +325,26 @@ export const describeImage = async (apiKey: string, imageBase64: string): Promis
 export const generateImage = async (apiKey: string, prompt: string): Promise<string> => {
   const { imageModel, aspectRatio, imageSize, filterId, customFilterDescription } = getModelConfig();
   
-  // Apply filter to the prompt
+  // Logic to handle "Artistic Style" based on filter selection
   let finalPrompt = prompt;
-  const selectedFilter = PRESET_FILTERS.find(f => f.id === filterId);
+  const styleIndex = prompt.lastIndexOf('STYLE:');
   
-  if (filterId === 'custom' && customFilterDescription) {
-    finalPrompt = `${prompt} ${customFilterDescription}`;
-  } else if (selectedFilter && selectedFilter.description) {
-    finalPrompt = `${prompt} ${selectedFilter.description}`;
+  if (filterId === 'none') {
+    // If filter is NONE, we keep the vision model's detected style.
+    // We just clean up the "STYLE: " prefix if it exists.
+    finalPrompt = prompt.replace('STYLE:', '').trim();
+  } else {
+    // If a filter is selected, we remove the vision model's style and append our own.
+    if (styleIndex !== -1) {
+      finalPrompt = prompt.substring(0, styleIndex).trim();
+    }
+    
+    const selectedFilter = PRESET_FILTERS.find(f => f.id === filterId);
+    if (filterId === 'custom' && customFilterDescription) {
+      finalPrompt = `${finalPrompt} ${customFilterDescription}`;
+    } else if (selectedFilter && selectedFilter.description) {
+      finalPrompt = `${finalPrompt} ${selectedFilter.description}`;
+    }
   }
 
   const response = await fetch(`${BASE_URL}/models/${imageModel}:generateContent`, {

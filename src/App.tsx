@@ -25,7 +25,8 @@ function App() {
     aspectRatio: '16:9', 
     imageSize: '1K',
     filterId: 'none',
-    customFilterDescription: ''
+    customFilterDescription: '',
+    enableGps: false
   });
 
   useEffect(() => {
@@ -122,6 +123,7 @@ function App() {
           aspectRatio={modelConfig.aspectRatio}
           filterId={modelConfig.filterId}
           imageSize={modelConfig.imageSize}
+          enableGps={modelConfig.enableGps}
           appMode={appMode}
           onProcessingChange={setIsProcessing}
         />
@@ -134,7 +136,14 @@ function App() {
               Changing settings will stop the current AI process. 
               Do you want to proceed and lose current progress?
             </div>
-            <button className="error-btn" style={{ background: 'var(--camera-accent)', color: 'black' }} onClick={() => handleAbortDecision(true)}>PROCEED & ABORT</button>
+            <button className="error-btn" style={{ background: 'var(--camera-accent)', color: 'black' }} onClick={() => {
+              if (pendingConfig.appMode) {
+                setAppMode(pendingConfig.appMode);
+                setPendingConfig(null);
+              } else {
+                handleAbortDecision(true);
+              }
+            }}>PROCEED & ABORT</button>
             <button className="error-btn secondary" onClick={() => handleAbortDecision(false)}>CANCEL</button>
           </div>
         )}
@@ -201,6 +210,26 @@ function App() {
                   onChange={(e) => applyConfigUpdate({ customFilterDescription: e.target.value })}
                 />
               )}
+            </div>
+
+            <div className="config-section">
+              <label className="config-label">GEOLOCATION (EXIF)</label>
+              <div className="config-options">
+                <button 
+                  className={`config-btn ${modelConfig.enableGps ? 'active' : ''}`}
+                  onClick={() => requestConfigUpdate({ enableGps: true })}
+                  style={{ fontSize: `calc(0.6rem * var(--ui-scale))` }}
+                >
+                  ENABLED
+                </button>
+                <button 
+                  className={`config-btn ${!modelConfig.enableGps ? 'active' : ''}`}
+                  onClick={() => requestConfigUpdate({ enableGps: false })}
+                  style={{ fontSize: `calc(0.6rem * var(--ui-scale))` }}
+                >
+                  DISABLED
+                </button>
+              </div>
             </div>
 
             <div style={{ marginTop: 'auto' }}>
