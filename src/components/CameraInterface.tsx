@@ -124,11 +124,37 @@ const CameraInterface: React.FC<CameraInterfaceProps> = ({ apiKey, aspectRatio, 
     if (videoRef.current && canvasRef.current) {
       const video = videoRef.current;
       const canvas = canvasRef.current;
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
+      
+      const [wRatio, hRatio] = aspectRatio.split(':').map(Number);
+      const targetRatio = wRatio / hRatio;
+      
+      const videoWidth = video.videoWidth;
+      const videoHeight = video.videoHeight;
+      const videoRatio = videoWidth / videoHeight;
+      
+      let sw, sh, sx, sy;
+      
+      if (videoRatio > targetRatio) {
+        // Video is wider than viewfinder (crop sides)
+        sh = videoHeight;
+        sw = videoHeight * targetRatio;
+        sx = (videoWidth - sw) / 2;
+        sy = 0;
+      } else {
+        // Video is taller than viewfinder (crop top/bottom)
+        sw = videoWidth;
+        sh = videoWidth / targetRatio;
+        sx = 0;
+        sy = (videoHeight - sh) / 2;
+      }
+
+      // We set canvas to the cropped size
+      canvas.width = sw;
+      canvas.height = sh;
+      
       const ctx = canvas.getContext('2d');
       if (ctx) {
-        ctx.drawImage(video, 0, 0);
+        ctx.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
         canvas.toBlob(async (blob) => {
           if (blob) {
             await processImage(blob);
