@@ -63,8 +63,9 @@ const VISION_DETAIL_GUIDE = `
 5. Technical Lighting: Identify light sources, shadow directions, and highlights to define 3D volume.
 6. Regional Info: Note any text, signs, or culturally specific elements with exact wording and placement. Race if human subjects are present.
 7. Artistic Style: Identify the medium and rendering techniques. 
-IMPORTANT: Prefix the final section with "STYLE: ".
-Provide only the description.`;
+IMPORTANT: Prefix the style section with "STYLE: ". 
+Additionally, provide a concise summary of the entire description (approx. 100 words) wrapped in <summary> tags at the very end.
+Provide only the description and the summary in this section, the section close with </summary>.`;
 
 const DEFAULT_VISION_PROMPT = `Provide a high-fidelity, literal description of this image for reconstruction. Avoid subjective interpretations and focus strictly on observable physical attributes. ${VISION_DETAIL_GUIDE}`;
 
@@ -379,8 +380,8 @@ export const describeImage = async (apiKey: string, imageBase64: string, signal?
 export const generateImage = async (apiKey: string, prompt: string, signal?: AbortSignal): Promise<string> => {
   const { imageModel, aspectRatio, imageSize } = getModelConfig();
   
-  // Use the vision model's prompt directly, just clean up the prefix
-  const finalPrompt = prompt.replace('STYLE:', '').trim();
+  // Use the vision model's prompt directly, but strip out the summary tag
+  const finalPrompt = prompt.replace(/<summary>[\s\S]*?<\/summary>/, '').trim();
 
   console.log('[DEBUG] Final Prompt sent to Image Model:', finalPrompt);
 

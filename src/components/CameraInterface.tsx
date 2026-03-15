@@ -20,6 +20,8 @@ const CameraInterface: React.FC<CameraInterfaceProps> = ({ apiKey, aspectRatio, 
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [coords, setCoords] = useState<{lat: number, lng: number} | null>(null);
   const [showDownloadStarted, setShowDownloadStarted] = useState(false);
+  const [summaryWords, setSummaryWords] = useState<string[]>([]);
+  const [visibleWordsCount, setVisibleWordsCount] = useState(0);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -47,6 +49,8 @@ const CameraInterface: React.FC<CameraInterfaceProps> = ({ apiKey, aspectRatio, 
     setSubStatus('');
     setErrorMessage(null);
     setCoords(null);
+    setSummaryWords([]);
+    setVisibleWordsCount(0);
     setLoading(false);
     onProcessingChange?.(false);
   };
@@ -55,6 +59,20 @@ const CameraInterface: React.FC<CameraInterfaceProps> = ({ apiKey, aspectRatio, 
     const processing = loading || (!!originalPreview && !resultImage);
     onProcessingChange?.(processing);
   }, [loading, originalPreview, resultImage, onProcessingChange]);
+
+  // Handle summary animation looping
+  useEffect(() => {
+    let interval: number;
+    if (summaryWords.length > 0 && loading && originalPreview && !resultImage) {
+      interval = window.setInterval(() => {
+        setVisibleWordsCount(prev => {
+          if (prev >= summaryWords.length) return 0;
+          return prev + 1;
+        });
+      }, 200);
+    }
+    return () => clearInterval(interval);
+  }, [summaryWords, loading, originalPreview, resultImage]);
 
   // Handle Camera Stream
   useEffect(() => {
@@ -171,11 +189,9 @@ const CameraInterface: React.FC<CameraInterfaceProps> = ({ apiKey, aspectRatio, 
         performCapture();
       }, (err) => {
         console.warn("Location error:", err);
-        setCoords(null);
         performCapture();
       });
     } else {
-      setCoords(null);
       performCapture();
     }
   };
@@ -192,11 +208,9 @@ const CameraInterface: React.FC<CameraInterfaceProps> = ({ apiKey, aspectRatio, 
       if (enableGps) {
         captureGpsAndProceed();
       } else {
-        setCoords(null);
         await performCapture();
       }
     } else {
-      setCoords(null);
       fileInputRef.current?.click();
     }
   };
@@ -231,6 +245,14 @@ const CameraInterface: React.FC<CameraInterfaceProps> = ({ apiKey, aspectRatio, 
       
       // POINT 2: Between I2T and T2I
       if (myRequestId !== latestRequestId.current || signal.aborted) return;
+
+      // Parse summary
+      const summaryMatch = description.match(/<summary>([\s\S]*?)<\/summary>/);
+      if (summaryMatch) {
+        const summary = summaryMatch[1].trim();
+        setSummaryWords(summary.split(/\s+/));
+        setVisibleWordsCount(0);
+      }
 
       console.log('[DEBUG] AI Vision Description:', description);
 
@@ -334,6 +356,16 @@ const CameraInterface: React.FC<CameraInterfaceProps> = ({ apiKey, aspectRatio, 
           <div className="loading-text-container">
             <div>{status}</div>
             <div className="loading-subtext">{subStatus}</div>
+          </div>
+        )}
+
+        {loading && summaryWords.length > 0 && (
+          <div className="summary-container">
+            {summaryWords.slice(0, visibleWordsCount).map((word, i) => (
+              <span key={`${i}-${visibleWordsCount < i ? 'reset' : 'show'}`} className="summary-word">
+                {word}
+              </span>
+            ))}
           </div>
         )}
 

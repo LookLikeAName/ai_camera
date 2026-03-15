@@ -196,6 +196,44 @@ body {
   font-size: calc(0.8rem * var(--ui-scale));
 }
 
+.loading-subtext {
+  font-size: 0.5rem;
+  color: #888;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.summary-container {
+  position: absolute;
+  bottom: 10%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 90%;
+  max-height: 30%;
+  overflow: hidden;
+  text-align: center;
+  z-index: 15;
+  pointer-events: none;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-content: flex-start;
+  gap: 4px;
+}
+
+.summary-word {
+  color: var(--camera-accent);
+  font-size: calc(0.6rem * var(--ui-scale));
+  text-shadow: 0 0 8px var(--camera-accent);
+  opacity: 0;
+  animation: word-glow-in 0.4s ease-out forwards;
+}
+
+@keyframes word-glow-in {
+  0% { opacity: 0; transform: scale(1.2); filter: blur(10px); }
+  100% { opacity: 1; transform: scale(1); filter: blur(0); }
+}
+
 .error-popup {
   position: absolute;
   top: 50%;
