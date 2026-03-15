@@ -48,6 +48,18 @@ export const PRESET_FILTERS: FilterOption[] = [
     visionInstruction: 'Analyze this image and describe it as if it were a delicate watercolor painting. Focus on the bleeding edges of colors, the transparency of the layers, and the visible texture of the watercolor paper.'
   },
   { 
+    id: 'anime', 
+    name: 'ANIME', 
+    description: 'In a modern Japanese anime style, with vibrant colors, cel-shaded characters, and dramatic lighting.',
+    visionInstruction: 'Analyze this image and describe it as if it were a scene from a modern Japanese anime. Focus on the cel-shading, vibrant character designs, expressive features, and stylized backgrounds typical of the medium.'
+  },
+  { 
+    id: 'manga', 
+    name: 'MANGA', 
+    description: 'As a classic Japanese manga page, monochrome (black and white), with screentone patterns, dynamic speed lines, and bold ink strokes.',
+    visionInstruction: 'Analyze this image and describe it as if it were a page from a Japanese manga. Focus on the monochrome ink work, use of screentones for shading, dynamic composition, and typical manga storytelling elements like speed lines.'
+  },
+  { 
     id: 'custom', 
     name: 'CUSTOM', 
     description: '',
