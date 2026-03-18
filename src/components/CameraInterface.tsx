@@ -30,6 +30,7 @@ const CameraInterface: React.FC<CameraInterfaceProps> = ({ apiKey, aspectRatio, 
   const streamRef = useRef<MediaStream | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const latestRequestId = useRef<number>(0);
+  const summaryContainerRef = useRef<HTMLDivElement>(null);
   
   const [vfSize, setVfSize] = useState({ width: 0, height: 0 });
 
@@ -60,14 +61,24 @@ const CameraInterface: React.FC<CameraInterfaceProps> = ({ apiKey, aspectRatio, 
     onProcessingChange?.(processing);
   }, [loading, originalPreview, resultImage, onProcessingChange]);
 
-  // Handle summary animation looping
+  // Handle summary animation looping and auto-scrolling
   useEffect(() => {
     let interval: number;
     if (summaryWords.length > 0 && loading && originalPreview && !resultImage) {
       interval = window.setInterval(() => {
         setVisibleWordsCount(prev => {
-          if (prev >= summaryWords.length) return 0;
-          return prev + 1;
+          const next = prev >= summaryWords.length ? 0 : prev + 1;
+          
+          // Handle auto-scroll
+          if (summaryContainerRef.current) {
+            if (next === 0) {
+              summaryContainerRef.current.scrollTop = 0;
+            } else {
+              summaryContainerRef.current.scrollTop = summaryContainerRef.current.scrollHeight;
+            }
+          }
+          
+          return next;
         });
       }, 200);
     }
@@ -189,9 +200,11 @@ const CameraInterface: React.FC<CameraInterfaceProps> = ({ apiKey, aspectRatio, 
         performCapture();
       }, (err) => {
         console.warn("Location error:", err);
+        setCoords(null);
         performCapture();
       });
     } else {
+      setCoords(null);
       performCapture();
     }
   };
@@ -208,9 +221,11 @@ const CameraInterface: React.FC<CameraInterfaceProps> = ({ apiKey, aspectRatio, 
       if (enableGps) {
         captureGpsAndProceed();
       } else {
+        setCoords(null);
         await performCapture();
       }
     } else {
+      setCoords(null);
       fileInputRef.current?.click();
     }
   };
@@ -277,11 +292,14 @@ const CameraInterface: React.FC<CameraInterfaceProps> = ({ apiKey, aspectRatio, 
       // Only show error if this is still the active request
       if (myRequestId === latestRequestId.current) {
         console.error(err);
+        
+        // Reset only functional states, keep error visible
         setResultImage(null);
         setOriginalPreview(null);
         setCoords(null);
         setLoading(false);
         onProcessingChange?.(false);
+        
         setErrorMessage(err.message || 'SYSTEM FAILURE');
         setStatus('IDLE');
       }
@@ -360,7 +378,7 @@ const CameraInterface: React.FC<CameraInterfaceProps> = ({ apiKey, aspectRatio, 
         )}
 
         {loading && summaryWords.length > 0 && (
-          <div className="summary-container">
+          <div className="summary-container" ref={summaryContainerRef}>
             {summaryWords.slice(0, visibleWordsCount).map((word, i) => (
               <span key={`${i}-${visibleWordsCount < i ? 'reset' : 'show'}`} className="summary-word">
                 {word}
